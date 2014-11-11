@@ -32,17 +32,13 @@ def main
     end
 
     local_file_names.each do |file_name|
-      page_counts_str = uncompress_gz_file('/Users/alex/Downloads/pagecounts-20141101-000000.gz') #todo 
+      page_counts_str = uncompress_gz_file("/Users/alex/Downloads/#{file_name}") #todo - path
       page_counts_hash = process_gz_file_content(page_counts_str)
 
       source_links = read_and_parse_csv(CSV_FILE_NAME)
-      process_links_and_counts(source_links)
+      process_links_and_counts(date_iter, source_links)
     end
   end
-
-rescue Exception => e
-  puts(e.message)
-  # puts('[ERROR] Invalid format for the date(s). Specify the start and end dates in the format YYYYmmdd.')
 end
 
 
@@ -142,25 +138,39 @@ end
 
 
 # # todo - filter for only the records we need - wikipedia records
-def process_links_and_counts(input)
+def process_links_and_counts(date_key, input)
   result = {}
   input.each do |lng_title, intern_id|
     if page_counts_hash[lng_title]
       val = page_counts_hash[lng_title].to_i
       lng = lng_title[0..1].to_sym
+
+
+      #todo - refactor
       if result.key?(intern_id)
-        #todo - insert date
-        if result[intern_id].key?(lng)
+        
+        if result[intern_id].key?(date_key)
+          
+          if result[intern_id][date_key].key?(lng)
 
-          # binding.pry
+            # binding.pry
 
-          result[intern_id][lng] += val
+            result[intern_id][date_key][lng] += val
+          else
+            result[intern_id][date_key][lng] = val
+          end
+
+
         else
-          result[intern_id][lng] = val
+          result[intern_id][date_key] = {}
+          result[intern_id][date_key][lng] = 0
         end
+        
+
       else
         result[intern_id] = {}
-        result[intern_id][lng] = 0
+        result[intern_id][date_key] = {}
+        result[intern_id][date_key][lng] = 0
       end
     end
   end

@@ -44,6 +44,7 @@ end
 
 def read_and_parse_csv(csv_file_name)
   result = {}
+
   CSV.foreach(csv_file_name) do |row|
     row_result = {}
     first_url_index = row.index { |x| x.start_with?('http://') }
@@ -52,16 +53,17 @@ def read_and_parse_csv(csv_file_name)
       if maybe_link.start_with?('http://')
         lng = maybe_link[7..8]
         title = maybe_link[maybe_link.rindex('/') + 1 .. -1]
-        if title.include?('?curid=')
-          # puts('Next... for ' + title)
-          next 
+        next if title.include?('?curid=')
+
+        lng_key = lng.to_sym
+        if row_result.has_key?(lng_key)
+          row_result[lng_key][:titles] << title
+        else
+          row_result[lng_key] = { count: 0 }
+          row_result[lng_key][:titles] = [title]
         end
-        row_result[lng.to_sym] = {
-          title: title,
-          count: 0
-        }
       else
-        row_result[row_result.keys[-1]][:title] = ',' + maybe_link
+        row_result[row_result.keys[-1]][:titles][-1] = ',' + maybe_link
       end
     end
 
@@ -72,22 +74,39 @@ def read_and_parse_csv(csv_file_name)
 end
 
 def connect_to_redis
-  redis = Redis.new(host: '127.0.0.1', port: 6380, db: 15)
+  redis = Redis.new(host: '127.0.0.1', port: 6380, db: 'wikipedia_pagecounts')
 end
 
 def uncompress_gz_file(file_name)
   infile = open(file_name)
   gz = Zlib::GzipReader.new(infile)
-  puts('Uncompressing...')
-  puts('Reading...')
-  puts(gz.read.size)
+  res = gz.read
   gz.close
+  res
 end
 
 
 # save_file('https://avatars0.githubusercontent.com/u/2032888?v=3&s=460', 'test2_img.jpg')
-# read_csv('wiki_urls.csv')
 # main()
-a = read_and_parse_csv('wiki_urls.csv')
-puts(a.take(2))
-# uncompress_gz_file('/Users/alex/Downloads/pagecounts-20141101-000000.gz')
+links = read_and_parse_csv('wiki_urls.csv')
+page_counts_str = uncompress_gz_file('/Users/alex/Downloads/pagecounts-20141101-000000.gz')
+
+
+links.each do |k, v|
+
+  v.each do |lng, titles_count|
+    titles_count[:titles].each do |title|
+      template = "#{lng} #{title}"
+      first_ind = page_counts_str.index(template)
+      if first_ind
+                  # binding.pry
+        last_index = page_counts_str.index("\n", first_ind) 
+        value = page_counts_str[first_ind ... last_index].split[2].to_i
+        puts('Value is ' + value.to_s) #todo remove
+      end
+
+    end 
+  end
+
+  # insert into Redis
+end

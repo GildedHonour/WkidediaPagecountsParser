@@ -44,30 +44,23 @@ end
 
 def read_and_parse_csv(csv_file_name)
   result = {}
-
   CSV.foreach(csv_file_name) do |row|
-    row_result = {}
     first_url_index = row.index { |x| x.start_with?('http://') }
     row.drop(first_url_index).each do |maybe_link|
       link_result = {}
       if maybe_link.start_with?('http://')
-        lng = maybe_link[7..8]
+        lng = maybe_link[7..8] #todo - hardcode
         title = maybe_link[maybe_link.rindex('/') + 1 .. -1]
         next if title.include?('?curid=')
-
-        lng_key = lng.to_sym
-        if row_result.has_key?(lng_key)
-          row_result[lng_key][:titles] << title
-        else
-          row_result[lng_key] = { count: 0 }
-          row_result[lng_key][:titles] = [title]
-        end
+        key = "#{lng}_#{title}"
+        result[key] = row[0]
       else
-        row_result[row_result.keys[-1]][:titles][-1] = ',' + maybe_link
+        prev_key = result.keys[-1]
+        new_key = prev_key + ',' + maybe_link
+        result.delete(prev_key)
+        result[new_key] = row[0]
       end
     end
-
-    result[row[0].to_sym] = row_result
   end
 
   result
@@ -86,27 +79,42 @@ def uncompress_gz_file(file_name)
 end
 
 
-# save_file('https://avatars0.githubusercontent.com/u/2032888?v=3&s=460', 'test2_img.jpg')
-# main()
-links = read_and_parse_csv('wiki_urls.csv')
+
+
+#todo - read line by line instead of a whole file all at once
 page_counts_str = uncompress_gz_file('/Users/alex/Downloads/pagecounts-20141101-000000.gz')
 
-
-links.each do |k, v|
-
-  v.each do |lng, titles_count|
-    titles_count[:titles].each do |title|
-      template = "#{lng} #{title}"
-      first_ind = page_counts_str.index(template)
-      if first_ind
-                  # binding.pry
-        last_index = page_counts_str.index("\n", first_ind) 
-        value = page_counts_str[first_ind ... last_index].split[2].to_i
-        puts('Value is ' + value.to_s) #todo remove
-      end
-
-    end 
-  end
-
-  # insert into Redis
+page_counts_hash = {}
+# todo - filter for only the records we need - wikipedia records
+page_counts_str.each_line do |x|
+  lng = x[0 .. 1].downcase
+  ind1 = x.index(' ', 3)
+  title = x[3 ... ind1]
+  key = "#{lng}_#{title}"
+  ind2 = x.index(' ', ind1 + 1)
+  val = x[ind1 + 1 ... ind2]
+  page_counts_hash[key] = val
 end
+
+  
+source_links = read_and_parse_csv('wiki_urls.csv')
+result = {}
+source_links.each do |lng_title, intern_id|
+  if page_counts_hash[lng_title]
+    val = page_counts_hash[lng_title].to_i
+    lng = lng_title[0..1].to_sym
+    if result.key?(intern_id)
+      #todo - refactor
+      if result[intern_id].key?(lng)
+        result[intern_id][lng] += val
+      else
+        result[intern_id][lng] = val
+      end
+    else
+      result[intern_id] = {}
+      result[intern_id][lng] = 0
+    end
+  end
+end
+
+puts('Done')

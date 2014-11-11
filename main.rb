@@ -7,6 +7,7 @@ require 'pry'
 PAGE_COUNTS_FILE_URL_TEMPLATE = 'https://dumps.wikimedia.org/other/pagecounts-raw/%{year}/%{year}-%{month}/pagecounts-%{year}%{month}%{day}-%{hour}0000.gz'
 MIN_YEAR = 2007
 HOURS_PER_DAY = 23
+CSV_FILE_NAME = 'wiki_urls.csv'
 
 def main
   date_start = Date.parse(ARGV[0])
@@ -17,19 +18,42 @@ def main
   end 
   
   abort('[ERROR] Start date has to be less or equal to the current date.') if date_start >= DateTime.now.to_date
-rescue
-  puts('[ERROR] Invalid format for the date(s). Specify the start and end dates in the format YYYYmmdd.')
-else
-  puts("Ok")
-  puts(date_start)
-  puts(date_end) if date_end
+
+
+  to_date = date_end ? date_end : date_start
+  (0..(to_date - date_start).to_i).to_a.each do |x|
+    date_iter = date_start + x
+    local_file_names = (0..HOURS_PER_DAY).map do |hour|
+      hour_formatted = '%02d' % hour
+      file_url = PAGE_COUNTS_FILE_URL_TEMPLATE % { year: date_iter.year, month: date_iter.month, day: date_iter.day, hour: hour_formatted }
+      local_file_name = 'pagecounts-%{year}%{month}%{day}-%{hour}0000.gz' % { year: date_iter.year, month: date_iter.month, day: date_iter.day, hour: hour } #todo - take the part after /
+      save_file(file_url, local_file_name)
+      local_file_name
+    end
+
+    local_file_names.each do |file_name|
+      page_counts_str = uncompress_gz_file('/Users/alex/Downloads/pagecounts-20141101-000000.gz') #todo 
+      page_counts_hash = process_gz_file_content(page_counts_str)
+
+      source_links = read_and_parse_csv(CSV_FILE_NAME)
+      process_links_and_counts(source_links)
+    end
+  end
+
+rescue Exception => e
+  puts(e.message)
+  # puts('[ERROR] Invalid format for the date(s). Specify the start and end dates in the format YYYYmmdd.')
 end
+
 
 def save_file(url, local_file_name)
   File.write(local_file_name, Net::HTTP.get(URI.parse(url)))
   puts("A file from #{url} downloaded and saved.")
 end
 
+
+
+#todo remove
 def save_files_by_dates(s_date, e_date: nil)
   to_date = e_date ? e_date : s_date
   (0 .. (to_date - s_date).to_i).to_a.each do |x|
@@ -41,6 +65,8 @@ def save_files_by_dates(s_date, e_date: nil)
     end
   end
 end
+
+
 
 def read_and_parse_csv(csv_file_name)
   result = {}
@@ -79,42 +105,66 @@ def uncompress_gz_file(file_name)
 end
 
 
+def uncompress_and_process_gz_file(file_name)
+  res = {}
 
+  infile = open(file_name)
+  gz = Zlib::GzipReader.new(infile)
+  gz.each_line do |x|
+    lng = x[0 .. 1].downcase
+    ind1 = x.index(' ', 3)
+    title = x[3 ... ind1]
+    key = "#{lng}_#{title}"
+    ind2 = x.index(' ', ind1 + 1)
+    val = x[ind1 + 1 ... ind2]
+    res[key] = val
+  end
 
-#todo - read line by line instead of a whole file all at once
-page_counts_str = uncompress_gz_file('/Users/alex/Downloads/pagecounts-20141101-000000.gz')
-
-page_counts_hash = {}
-# todo - filter for only the records we need - wikipedia records
-page_counts_str.each_line do |x|
-  lng = x[0 .. 1].downcase
-  ind1 = x.index(' ', 3)
-  title = x[3 ... ind1]
-  key = "#{lng}_#{title}"
-  ind2 = x.index(' ', ind1 + 1)
-  val = x[ind1 + 1 ... ind2]
-  page_counts_hash[key] = val
+  res
 end
 
-  
-source_links = read_and_parse_csv('wiki_urls.csv')
-result = {}
-source_links.each do |lng_title, intern_id|
-  if page_counts_hash[lng_title]
-    val = page_counts_hash[lng_title].to_i
-    lng = lng_title[0..1].to_sym
-    if result.key?(intern_id)
-      #todo - refactor
-      if result[intern_id].key?(lng)
-        result[intern_id][lng] += val
+def process_gz_file_content(input)
+  res = {}
+  input.each_line do |x|
+    lng = x[0 .. 1].downcase
+    ind1 = x.index(' ', 3)
+    title = x[3 ... ind1]
+    key = "#{lng}_#{title}"
+    ind2 = x.index(' ', ind1 + 1)
+    val = x[ind1 + 1 ... ind2]
+    res[key] = val
+  end
+
+  res
+end
+
+
+
+
+# # todo - filter for only the records we need - wikipedia records
+def process_links_and_counts(input)
+  result = {}
+  input.each do |lng_title, intern_id|
+    if page_counts_hash[lng_title]
+      val = page_counts_hash[lng_title].to_i
+      lng = lng_title[0..1].to_sym
+      if result.key?(intern_id)
+        #todo - insert date
+        if result[intern_id].key?(lng)
+
+          # binding.pry
+
+          result[intern_id][lng] += val
+        else
+          result[intern_id][lng] = val
+        end
       else
-        result[intern_id][lng] = val
+        result[intern_id] = {}
+        result[intern_id][lng] = 0
       end
-    else
-      result[intern_id] = {}
-      result[intern_id][lng] = 0
     end
   end
 end
 
-puts('Done')
+main()
+# puts('Done')

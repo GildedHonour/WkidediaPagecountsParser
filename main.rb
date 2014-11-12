@@ -12,6 +12,7 @@ CSV_FILE_NAME = 'wiki_urls.csv'
 REDIS_DB_NAME = 'wikipedia_pagecounts'
 REDIS_LOGIN = ''
 REDIS_PASSWORD = ''
+REDIS_IP = ''
 
 def main
   date_start = Date.parse(ARGV[0])
@@ -28,22 +29,26 @@ def main
   (0..(to_date - date_start).to_i).to_a.each do |x|
     date_iter = date_start + x
 
+    
     # local_file_names = (0..HOURS_PER_DAY).map do |hour|
-    #   hour_formatted = '%02d' % hour
-    #   file_url = PAGE_COUNTS_FILE_URL_TEMPLATE % { year: date_iter.year, month: date_iter.month, day: date_iter.day, hour: hour_formatted }
-    #   local_file_name = 'pagecounts-%{year}%{month}%{day}-%{hour}0000.gz' % { year: date_iter.year, month: date_iter.month, day: date_iter.day, hour: hour } #todo - take the part after /
-    #   save_file(file_url, local_file_name)
-    #   local_file_name
-    # end
+    local_file_names = (0..2).map do |hour| #todo debug
+      hour_formatted = '%02d' % hour
+      file_url = PAGE_COUNTS_FILE_URL_TEMPLATE % { year: date_iter.year, month: date_iter.month, day: date_iter.day, hour: hour_formatted }
+      local_file_name = 'pagecounts-%{year}%{month}%{day}-%{hour}0000.gz' % { year: date_iter.year, month: date_iter.month, day: date_iter.day, hour: hour } #todo - take the part after /
+      save_file(file_url, local_file_name)
+      local_file_name
+    end
 
-    local_file_names = ['pagecounts-20141101-000000.gz'] #todo
+    binding.pry
+
     local_file_names.each do |file_name|
-      puts("Processing #{file_name}...")
+      puts(" - Processing #{file_name}...")
       page_counts_str = uncompress_gz_file("/Users/alex/Downloads/#{file_name}") #todo - path
       page_counts_hash = process_gz_file_content(page_counts_str)
 
       source_links = read_and_parse_csv(CSV_FILE_NAME)
-      process_links_and_counts(source_links, page_counts_hash, date_iter)
+      date_iter_formatted = date_iter.strftime("%Y%m%d").to_sym
+      process_pagecounts_dump_file(source_links, page_counts_hash, date_iter_formatted)
       puts("Ok! Done processing #{file_name}")
     end
   end
@@ -51,9 +56,17 @@ end
 
 
 def save_file(url, local_file_name)
-  puts("Downloading #{url} ...")
-  File.write(local_file_name, Net::HTTP.get(URI.parse(url)))
-  puts("Ok!")
+  puts(" - Downloading #{url} ...")
+  uri = URI.parse(url)
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.use_ssl = true
+  data = http.get(uri.request_uri)
+  if data.code.to_i == 200
+    File.write(local_file_name, data.body)
+    puts(" -- [OK]\n\n")
+  else
+    puts(" -- [Error] #{data.code}, #{data.message}\n\n")
+  end
 end
 
 def read_and_parse_csv(csv_file_name)
@@ -126,7 +139,7 @@ end
 
 
 # # todo - filter for only the records we need - wikipedia records
-def process_links_and_counts(input, page_counts_hash, date_key)
+def process_pagecounts_dump_file(input, page_counts_hash, date_key)
   result = {}
   input.each do |lng_title, intern_id|
 
@@ -172,20 +185,39 @@ end
 def save_to_redis(input)
   redis = connect_to_redis()
   i = 0
-  input.each do |k, v|
-    date_key = v.keys[0]
-    date_key_formatted = v.keys[0].strftime("%Y%m%d")
+  input.each do |k, date_lng_val|
 
-    hash_formatted = {}
-    hash_formatted[date_key_formatted] = v[date_key]
+    #todo
+    # if exist then merge
+    # otherwise insert
+    maybe_json = redis.get(k)
+    date_key = date_lng_val.keys[0]
+    if maybe_json
 
-    redis.set(k, hash_formatted.to_json) #todo
-    puts("The key #{k} has been saved to redis")
+      binding.pry
+
+      old_data = JSON.parse(maybe_json, { symbolize_names: true })
+      new_data = old_data.merge(date_lng_val) do |key, v1, v2| 
+        v1.merge(v2) { |key, v1, v2| v1 + v2 } 
+      end
+
+      redis.set(k, new_data.to_json) 
+    else
+      hash_formatted = {}
+      hash_formatted[k] = date_lng_val
+      redis.set(k, hash_formatted.to_json) #todo
+    end
+    
+    puts("--The key #{k} has been saved to redis")
     i += 1
   end
 
-  puts("Total of #{i} keys has been saved to redis")
+  puts("-Total of #{i} keys has been saved to redis")
 end
 
 main()
 # puts('Done')
+
+# v.each do |date, lng_count_val|
+
+    # end

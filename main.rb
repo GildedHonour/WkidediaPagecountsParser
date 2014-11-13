@@ -12,7 +12,8 @@ CSV_FILE_NAME = 'wiki_urls.csv'
 REDIS_DB_NAME = 'wikipedia_pagecounts'
 REDIS_LOGIN = ''
 REDIS_PASSWORD = ''
-REDIS_IP = ''
+REDIS_IP = '127.0.0.1'
+SLEEP_SECONDS = 120
 
 def main
   date_start = Date.parse(ARGV[0])
@@ -32,7 +33,7 @@ def main
     day_formatted = '%02d' % date_iter.day
     
     # local_file_names = (0..HOURS_PER_DAY).map do |hour|
-    local_file_names = (0..1).map do |hour|
+    local_file_names = (0..5).map do |hour|
       hour_formatted = '%02d' % hour
       url = PAGE_COUNTS_FILE_URL_TEMPLATE % { year: date_iter.year, month: month_formatted, day: day_formatted, hour: hour_formatted }
       save_file(url)
@@ -53,55 +54,74 @@ def main
       date_iter_formatted = date_iter.strftime("%Y%m%d").to_sym
       process_pagecounts_dump_file(source_links, page_counts_hash, date_iter_formatted)
       
-      puts(" - [OK] Done with #{file_name}\n\n")
+      puts(" - [OK] Done processing the file #{file_name}\n\n")
     end
   end
 end
 
-def save_file(url)
+def save_file(url, repeat_count = 3)
   uri = URI.parse(url)
   file_name = File.basename(uri.path)
   full_path = File.join(Dir.pwd, file_name)
-
-
-
   http = Net::HTTP.new(uri.host, uri.port)
   http.use_ssl = true
   http.request_get(uri.path) do |response|
-    temp_file = Tempfile.new("download-#{file_name}")
-    temp_file.binmode
-
-            # binding.pry
-
-
-    size = 0
-    progress = 0
-    total = response.header["Content-Length"].to_i
-    total_mb = total / 1024 / 1024
-
+    
     # binding.pry
 
-    
-    response.read_body do |chunk|
-      temp_file << chunk
-      size += chunk.size
-      new_progress = (size * 100) / total
-      unless new_progress == progress
-        print("\rDownloading %s (%3d%%) of ~ %3dMb" % [file_name, new_progress, total_mb])
+    case response
+    when Net::HTTPNotFound
+      puts(' - [Error] 404: not found')
+      return nil
+
+    when Net::HTTPForbidden
+      raise ' - [Error] 403: forbidden, exhausted all retry attempts' if repeat_count <= 0 
+      puts('- [Error] 403: forbidden, one more attempt...')
+      sleep(SLEEP_SECONDS)  
+      return save_file(url, repeat_count - 1)
+
+    when Net::HTTPClientError
+      puts(" - [Error] client error: #{response.inspect}")
+      return nil
+
+    when Net::HTTPOK
+      temp_file = Tempfile.new("download-#{file_name}")
+      temp_file.binmode
+
+              # binding.pry
+
+
+      size = 0
+      progress = 0
+      total = response.header["Content-Length"].to_i
+      total_mb = total / 1024 / 1024
+
+      # binding.pry
+
+
+      response.read_body do |chunk|
+        temp_file << chunk
+        size += chunk.size
+        new_progress = (size * 100) / total
+        print("\rDownloading %s %3d%% of ≈ #{total_mb}Mb" % [file_name, new_progress]) unless new_progress == progress
+        progress = new_progress
       end
-      progress = new_progress
+
+      puts(" - [OK] Downloaded")
+
+      temp_file.close
+      File.unlink(full_path) if File.exists?(full_path)
+      FileUtils.mkdir_p(File.dirname(full_path))
+      FileUtils.mv(temp_file.path, full_path, force: true)
+
+      full_path
     end
-
-    puts("\n[OK] Done")
-
-    temp_file.close
-    File.unlink(full_path) if File.exists?(full_path)
-    FileUtils.mkdir_p(File.dirname(full_path))
-    FileUtils.mv(temp_file.path, full_path, force: true)
-
-    full_path
   end
 
+rescue Exception => e
+  File.unlink(full_path) if File.exists?(full_path)
+  puts(" - [Error]: #{e.message}")
+  raise 'Failed to download file'
 end
 
 def read_and_parse_csv(csv_file_name)
@@ -129,7 +149,7 @@ def read_and_parse_csv(csv_file_name)
 end
 
 def connect_to_redis
-  Redis.new(host: '127.0.0.1', port: 6379, db: REDIS_DB_NAME)
+  Redis.new(host: REDIS_IP, port: 6379, db: REDIS_DB_NAME)
 end
 
 def uncompress_gz_file(file_name)

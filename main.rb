@@ -28,45 +28,80 @@ def main
   to_date = date_end ? date_end : date_start
   (0..(to_date - date_start).to_i).to_a.each do |x|
     date_iter = date_start + x
-
+    month_formatted = '%02d' % date_iter.month
+    day_formatted = '%02d' % date_iter.day
     
     # local_file_names = (0..HOURS_PER_DAY).map do |hour|
-    local_file_names = (0..2).map do |hour| #todo debug
+    local_file_names = (0..1).map do |hour|
       hour_formatted = '%02d' % hour
-      file_url = PAGE_COUNTS_FILE_URL_TEMPLATE % { year: date_iter.year, month: date_iter.month, day: date_iter.day, hour: hour_formatted }
-      local_file_name = 'pagecounts-%{year}%{month}%{day}-%{hour}0000.gz' % { year: date_iter.year, month: date_iter.month, day: date_iter.day, hour: hour } #todo - take the part after /
-      save_file(file_url, local_file_name)
-      local_file_name
+      url = PAGE_COUNTS_FILE_URL_TEMPLATE % { year: date_iter.year, month: month_formatted, day: day_formatted, hour: hour_formatted }
+      save_file(url)
     end
 
-    binding.pry
+    #todo
+    # local_file_names = ['pagecounts_text1.gz'] #todo - remove
+    
+            binding.pry
+
 
     local_file_names.each do |file_name|
       puts(" - Processing #{file_name}...")
-      page_counts_str = uncompress_gz_file("/Users/alex/Downloads/#{file_name}") #todo - path
+      page_counts_str = uncompress_gz_file(file_name) #todo - path
       page_counts_hash = process_gz_file_content(page_counts_str)
 
       source_links = read_and_parse_csv(CSV_FILE_NAME)
       date_iter_formatted = date_iter.strftime("%Y%m%d").to_sym
       process_pagecounts_dump_file(source_links, page_counts_hash, date_iter_formatted)
-      puts("Ok! Done processing #{file_name}")
+      
+      puts(" - [OK] Done with #{file_name}\n\n")
     end
   end
 end
 
-
-def save_file(url, local_file_name)
-  puts(" - Downloading #{url} ...")
+def save_file(url)
   uri = URI.parse(url)
+  file_name = File.basename(uri.path)
+  full_path = File.join(Dir.pwd, file_name)
+
+
+
   http = Net::HTTP.new(uri.host, uri.port)
   http.use_ssl = true
-  data = http.get(uri.request_uri)
-  if data.code.to_i == 200
-    File.write(local_file_name, data.body)
-    puts(" -- [OK]\n\n")
-  else
-    puts(" -- [Error] #{data.code}, #{data.message}\n\n")
+  http.request_get(uri.path) do |response|
+    temp_file = Tempfile.new("download-#{file_name}")
+    temp_file.binmode
+
+            # binding.pry
+
+
+    size = 0
+    progress = 0
+    total = response.header["Content-Length"].to_i
+    total_mb = total / 1024 / 1024
+
+    # binding.pry
+
+    
+    response.read_body do |chunk|
+      temp_file << chunk
+      size += chunk.size
+      new_progress = (size * 100) / total
+      unless new_progress == progress
+        print("\rDownloading %s (%3d%%) of ~ %3dMb" % [file_name, new_progress, total_mb])
+      end
+      progress = new_progress
+    end
+
+    puts("\n[OK] Done")
+
+    temp_file.close
+    File.unlink(full_path) if File.exists?(full_path)
+    FileUtils.mkdir_p(File.dirname(full_path))
+    FileUtils.mv(temp_file.path, full_path, force: true)
+
+    full_path
   end
+
 end
 
 def read_and_parse_csv(csv_file_name)
@@ -186,15 +221,11 @@ def save_to_redis(input)
   redis = connect_to_redis()
   i = 0
   input.each do |k, date_lng_val|
-
-    #todo
-    # if exist then merge
-    # otherwise insert
     maybe_json = redis.get(k)
     date_key = date_lng_val.keys[0]
     if maybe_json
 
-      binding.pry
+      # binding.pry
 
       old_data = JSON.parse(maybe_json, { symbolize_names: true })
       new_data = old_data.merge(date_lng_val) do |key, v1, v2| 
@@ -208,11 +239,11 @@ def save_to_redis(input)
       redis.set(k, hash_formatted.to_json) #todo
     end
     
-    puts("--The key #{k} has been saved to redis")
+    # puts(" -- The key #{k} has been inserted to or updated in redis")
     i += 1
   end
 
-  puts("-Total of #{i} keys has been saved to redis")
+  puts(" - Total of #{i} keys have been saved to or updated in redis")
 end
 
 main()

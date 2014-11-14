@@ -6,7 +6,7 @@ require 'pry' #todo remove
 require 'json'
 
 PAGE_COUNTS_FILE_URL_TEMPLATE = 'https://dumps.wikimedia.org/other/pagecounts-raw/%{year}/%{year}-%{month}/pagecounts-%{year}%{month}%{day}-%{hour}0000.gz'
-MIN_YEAR = 2007
+MIN_YEAR = 2014
 HOURS_PER_DAY = 23
 CSV_FILE_NAME = 'wiki_encoded_urls2.csv'
 REDIS_DB_NAME = 'wikipedia_pagecounts'
@@ -17,7 +17,7 @@ SLEEP_SECONDS = 120
 
 def main
   date_start = Date.parse(ARGV[0])
-  abort("[ERROR] Start date cannot be let than #{MIN_YEAR} year.") if date_start.year < MIN_YEAR
+  abort("[ERROR] Start date cannot be less than #{MIN_YEAR} year.") if date_start.year < MIN_YEAR
   if ARGV[1]
     date_end = Date.parse(ARGV[1]) 
     abort('[ERROR] Start date cannot be more than End date.') if date_start > date_end
@@ -27,18 +27,20 @@ def main
   to_date = date_end ? date_end : date_start
   (0..(to_date - date_start).to_i).to_a.each do |x|
     date_iter = date_start + x
+    puts("- [Date] #{date_iter.strftime('%Y %m %d')}")
     month_formatted = '%02d' % date_iter.month
     day_formatted = '%02d' % date_iter.day
     
     local_file_names = (0..HOURS_PER_DAY).map do |hour|
-    # local_file_names = (0..0).map do |hour| #todo - remove - 2 files
+    # local_file_names = (0..0).map do |hour| #todo - 2 files
       hour_formatted = '%02d' % hour
+      puts(" - [Time] #{hour_formatted}:00")
       url = PAGE_COUNTS_FILE_URL_TEMPLATE % { year: date_iter.year, month: month_formatted, day: day_formatted, hour: hour_formatted }
       save_file(url)
     end
 
     local_file_names.each do |full_file_name|
-      puts(" - [Processing]...")
+      puts(" - [Processing] the file #{File.basename(full_file_name)}...")
       page_counts_str = uncompress_gz_file(full_file_name)
       page_counts_hash = process_gz_file_content(page_counts_str)
 
@@ -49,6 +51,8 @@ def main
       puts(" - [OK]\n\n")
     end
   end
+
+  puts('- [OK] Done')
 end
 
 def save_file(url, repeat_count = 3)
@@ -75,7 +79,7 @@ def save_file(url, repeat_count = 3)
       temp_file.binmode
       size = 0
       progress = 0
-      total = response.header["Content-Length"].to_i
+      total = response.header['Content-Length'].to_i
       total_mb = total / 1024 / 1024
       response.read_body do |chunk|
         temp_file << chunk
@@ -148,6 +152,7 @@ end
 
 def process_gz_file_content(input)
   title_starting_index = 3
+  print(' - [Parsing1] ')
   res = {}
   input.each_line do |x|
     lng = x[0..1].downcase
@@ -159,44 +164,46 @@ def process_gz_file_content(input)
     res[key] = val
   end
 
+  puts('[OK]')
   res
 end
 
 # # todo - filter for only the records we need - wikipedia records
 def process_pagecounts_dump_file(input, page_counts_hash, date_key)
-  print(' - [Parsing] ')
+  print(' - [Parsing2] ')
   result = {}
   input.each do |lng_title, intern_id|
+    intern_id_sym = intern_id.to_sym
     if page_counts_hash[lng_title]
       count = page_counts_hash[lng_title].to_i
       lng = lng_title[0..1].to_sym
 
 
       #todo - refactor
-      if result.key?(intern_id)
+      if result.key?(intern_id_sym)
         
-        if result[intern_id].key?(date_key)
+        if result[intern_id_sym].key?(date_key)
           
-          if result[intern_id][date_key].key?(lng)
+          if result[intern_id_sym][date_key].key?(lng)
 
             # binding.pry
 
-            result[intern_id][date_key][lng] += count
+            result[intern_id_sym][date_key][lng] += count
           else
-            result[intern_id][date_key][lng] = count
+            result[intern_id_sym][date_key][lng] = count
           end
 
 
         else
-          result[intern_id][date_key] = {}
-          result[intern_id][date_key][lng] = 0
+          result[intern_id_sym][date_key] = {}
+          result[intern_id_sym][date_key][lng] = 0
         end
         
 
       else
-        result[intern_id] = {}
-        result[intern_id][date_key] = {}
-        result[intern_id][date_key][lng] = 0
+        result[intern_id_sym] = {}
+        result[intern_id_sym][date_key] = {}
+        result[intern_id_sym][date_key][lng] = 0
       end
     end
   end
@@ -211,18 +218,15 @@ def save_to_redis(input)
   i = 0
   input.each do |k, date_lng_val|
     maybe_json = redis.get(k)
-    date_key = date_lng_val.keys[0]
     if maybe_json
       old_data = JSON.parse(maybe_json, { symbolize_names: true })
       new_data = old_data.merge(date_lng_val) do |key, v1, v2| 
-        v1.merge(v2) { |key, v1, v2| v1 + v2 } 
+        v1.merge(v2) { |key, v1, v2| v1 + v2 }
       end
 
       redis.set(k, new_data.to_json) 
     else
-      hash_formatted = {}
-      hash_formatted[k] = date_lng_val
-      redis.set(k, hash_formatted.to_json) #todo
+      redis.set(k, date_lng_val.to_json)
     end
 
     i += 1

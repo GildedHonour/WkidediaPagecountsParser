@@ -30,8 +30,8 @@ def main
     month_formatted = '%02d' % date_iter.month
     day_formatted = '%02d' % date_iter.day
     
-    local_file_names = (0..HOURS_PER_DAY).map do |hour|
-    # local_file_names = (0..0).map do |hour| #todo - remove - 2 files
+    # local_file_names = (0..HOURS_PER_DAY).map do |hour|
+    local_file_names = (0..0).map do |hour| #todo - remove - 2 files
       hour_formatted = '%02d' % hour
       url = PAGE_COUNTS_FILE_URL_TEMPLATE % { year: date_iter.year, month: month_formatted, day: day_formatted, hour: hour_formatted }
       save_file(url)
@@ -75,7 +75,7 @@ def save_file(url, repeat_count = 3)
       temp_file.binmode
       size = 0
       progress = 0
-      total = response.header["Content-Length"].to_i
+      total = response.header['Content-Length'].to_i
       total_mb = total / 1024 / 1024
       response.read_body do |chunk|
         temp_file << chunk
@@ -215,7 +215,9 @@ def save_to_redis(input)
     if maybe_json
       old_data = JSON.parse(maybe_json, { symbolize_names: true })
       new_data = old_data.merge(date_lng_val) do |key, v1, v2| 
-        v1.merge(v2) { |key, v1, v2| v1 + v2 } 
+        v1.merge(v2) do |key, v1, v2| 
+          v1.merge(v2) { |key, v1, v2| v1 + v2 }
+        end
       end
 
       redis.set(k, new_data.to_json) 

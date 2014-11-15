@@ -2,7 +2,6 @@ require 'net/http'
 require 'csv'
 require 'redis'
 require 'date'
-require 'pry' #todo remove
 require 'json'
 
 PAGE_COUNTS_FILE_URL_TEMPLATE = 'https://dumps.wikimedia.org/other/pagecounts-raw/%{year}/%{year}-%{month}/pagecounts-%{year}%{month}%{day}-%{hour}0000.gz'
@@ -10,8 +9,6 @@ MIN_YEAR = 2014
 HOURS_PER_DAY = 23
 CSV_FILE_NAME = 'wiki_encoded_urls2.csv'
 REDIS_DB_NAME = 'wikipedia_pagecounts'
-REDIS_LOGIN = ''
-REDIS_PASSWORD = ''
 REDIS_IP = '127.0.0.1'
 SLEEP_SECONDS = 120
 
@@ -32,7 +29,6 @@ def main
     day_formatted = '%02d' % date_iter.day
     
     local_file_names = (0..HOURS_PER_DAY).map do |hour|
-    # local_file_names = (0..0).map do |hour| #todo - 2 files
       hour_formatted = '%02d' % hour
       puts(" - [Time] #{hour_formatted}:00")
       url = PAGE_COUNTS_FILE_URL_TEMPLATE % { year: date_iter.year, month: month_formatted, day: day_formatted, hour: hour_formatted }
@@ -168,7 +164,6 @@ def process_gz_file_content(input)
   res
 end
 
-# # todo - filter for only the records we need - wikipedia records
 def process_pagecounts_dump_file(input, page_counts_hash, date_key)
   print(' - [Parsing2] ')
   result = {}
@@ -177,29 +172,17 @@ def process_pagecounts_dump_file(input, page_counts_hash, date_key)
     if page_counts_hash[lng_title]
       count = page_counts_hash[lng_title].to_i
       lng = lng_title[0..1].to_sym
-
-
-      #todo - refactor
       if result.key?(intern_id_sym)
-        
         if result[intern_id_sym].key?(date_key)
-          
           if result[intern_id_sym][date_key].key?(lng)
-
-            # binding.pry
-
             result[intern_id_sym][date_key][lng] += count
           else
             result[intern_id_sym][date_key][lng] = count
           end
-
-
         else
           result[intern_id_sym][date_key] = {}
           result[intern_id_sym][date_key][lng] = 0
         end
-        
-
       else
         result[intern_id_sym] = {}
         result[intern_id_sym][date_key] = {}
